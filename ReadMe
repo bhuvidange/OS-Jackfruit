@@ -63,46 +63,43 @@ Include screenshots showing:
 ## Engineering Analysis
 
 ### 1. Isolation Mechanisms
-Containers run with separate PID and mount namespaces. Each container has its own root filesystem (e.g., rootfs-alpha), so file changes are isolated. `/proc` is mounted inside the container so process-related commands work properly.
+From the outputs, containers like alpha run with their own PID and root filesystem (rootfs-alpha). This shows that PID and mount isolation are working. Inside the container, /proc is mounted, which allows process-related commands to function correctly.  
 
-However, all containers share the same host kernel, which is why kernel logs (`dmesg`) show activity for all containers.
+Each container uses a separate rootfs copy, so file changes in one container do not affect others. However, all containers still use the same kernel, which is why kernel logs (seen in dmesg) show activity for all containers together.
 
 ---
 
 ### 2. Supervisor and Process Lifecycle
-A long-running supervisor manages all containers. Commands like `engine start` create containers, and the supervisor tracks details like container ID, PID, and state.
+The supervisor process stays active while multiple containers are started using commands like engine start. From the logs, we can see container IDs, PIDs, and exit messages, which shows that metadata is being tracked.  
 
-When containers exit (e.g., “exited container=alpha”), the supervisor detects this and reaps the process using `waitpid()`, preventing zombie processes. It also differentiates between normal exit and forced termination.
+When containers exit, messages like “exited container=alpha” appear, showing that the supervisor correctly detects termination and reaps processes (no zombies). The system also distinguishes between normal exit and forced termination based on logs.
 
 ---
 
 ### 3. IPC, Threads, and Synchronization
-Two IPC mechanisms are used:
-- CLI to supervisor communication (socket/FIFO) for commands  
-- Pipes from container to supervisor for logging  
+Two communication paths are visible in the outputs:  
 
-Container output is handled using a bounded buffer:
-- Producer threads read from pipes and add logs  
-- Consumer threads write logs to files  
+Commands like engine start reach the supervisor, showing CLI-to-supervisor communication.  
+Container outputs are captured and stored (seen in logs), showing pipe-based logging.  
 
-Mutexes and condition variables are used to prevent race conditions and ensure safe access to shared data.
+The logging system uses a bounded buffer where container output is collected and written to files. This prevents direct writing conflicts and ensures logs are not lost even if multiple containers run at the same time.
 
 ---
 
 ### 4. Memory Management and Enforcement
-Each container has soft and hard memory limits.
+From the screenshots, memory limits like soft=... and hard=... are assigned to containers. Kernel logs show events when limits are crossed.  
 
-- Soft limit: generates a warning when exceeded  
-- Hard limit: kills the container  
+When the soft limit is exceeded, a warning is logged.  
+When the hard limit is exceeded, the container is killed (seen in exit logs).  
 
-The kernel module (`/dev/container_monitor`) monitors memory using RSS and enforces limits. The supervisor updates container status based on how it terminated.
+This is handled in the kernel module (/dev/container_monitor), ensuring accurate monitoring using RSS. The supervisor reflects this in container status (killed vs exited).
 
 ---
 
 ### 5. Scheduling Behavior
-Multiple containers run at the same time, showing how CPU is shared.
+From the runs, multiple containers are executed together, which demonstrates concurrent execution. By assigning different parameters (like memory or priority), we can observe differences in behavior such as execution time or responsiveness.  
 
-CPU-bound processes use more CPU, while others get less depending on priority (nice values). This demonstrates how the Linux scheduler maintains fairness and responsiveness.
+This shows how the Linux scheduler shares CPU time between processes. CPU-heavy containers run continuously, while others may get less CPU depending on priority, demonstrating fairness and scheduling control.
 
 ---
 
