@@ -1,0 +1,125 @@
+# Multi-Container Runtime
+
+## Team Information
+- Arushi Punhani – PES2UG24CS086  
+- Bhuvi Dange – PES2UG24CS118  
+
+---
+
+## Build, Load, and Run Instructions
+
+### Build
+make
+
+### Load Kernel Module
+sudo insmod monitor.ko
+
+### Verify Device
+ls -l /dev/container_monitor
+
+### Start Supervisor
+sudo ./engine supervisor ./rootfs-base
+
+### Create Container Root Filesystems
+cp -a ./rootfs-base ./rootfs-alpha  
+cp -a ./rootfs-base ./rootfs-beta  
+
+### Start Containers
+sudo ./engine start alpha ./rootfs-alpha /bin/sh --soft-mib 48 --hard-mib 80  
+sudo ./engine start beta ./rootfs-beta /bin/sh --soft-mib 64 --hard-mib 96  
+
+### List Containers
+sudo ./engine ps
+
+### View Logs
+sudo ./engine logs alpha
+
+### Stop Containers
+sudo ./engine stop alpha  
+sudo ./engine stop beta  
+
+### Check Kernel Logs
+dmesg | tail
+
+### Unload Module
+sudo rmmod monitor
+
+---
+
+## Demo (Screenshots)
+
+Include screenshots showing:
+- Multiple containers running under one supervisor  
+- Output of `ps` command with container metadata  
+- Log files capturing container output  
+- CLI commands interacting with supervisor  
+- Soft memory limit warning  
+- Hard memory limit kill  
+- Scheduling experiment results  
+- Clean shutdown (no zombie processes)  
+
+---
+
+## Engineering Analysis
+
+### 1. Isolation Mechanisms
+Containers run with separate PID and mount namespaces. Each container has its own root filesystem (e.g., rootfs-alpha), so file changes are isolated. `/proc` is mounted inside the container so process-related commands work properly.
+
+However, all containers share the same host kernel, which is why kernel logs (`dmesg`) show activity for all containers.
+
+---
+
+### 2. Supervisor and Process Lifecycle
+A long-running supervisor manages all containers. Commands like `engine start` create containers, and the supervisor tracks details like container ID, PID, and state.
+
+When containers exit (e.g., “exited container=alpha”), the supervisor detects this and reaps the process using `waitpid()`, preventing zombie processes. It also differentiates between normal exit and forced termination.
+
+---
+
+### 3. IPC, Threads, and Synchronization
+Two IPC mechanisms are used:
+- CLI to supervisor communication (socket/FIFO) for commands  
+- Pipes from container to supervisor for logging  
+
+Container output is handled using a bounded buffer:
+- Producer threads read from pipes and add logs  
+- Consumer threads write logs to files  
+
+Mutexes and condition variables are used to prevent race conditions and ensure safe access to shared data.
+
+---
+
+### 4. Memory Management and Enforcement
+Each container has soft and hard memory limits.
+
+- Soft limit: generates a warning when exceeded  
+- Hard limit: kills the container  
+
+The kernel module (`/dev/container_monitor`) monitors memory using RSS and enforces limits. The supervisor updates container status based on how it terminated.
+
+---
+
+### 5. Scheduling Behavior
+Multiple containers run at the same time, showing how CPU is shared.
+
+CPU-bound processes use more CPU, while others get less depending on priority (nice values). This demonstrates how the Linux scheduler maintains fairness and responsiveness.
+
+---
+
+## Design Decisions and Tradeoffs
+
+- Namespaces + chroot provide simple isolation but share the same kernel  
+- Supervisor design simplifies management but is a single point of failure  
+- Pipe-based logging is reliable but requires synchronization  
+- Kernel memory monitoring is accurate but increases complexity  
+
+---
+
+## Scheduler Experiment Results
+
+| Configuration | Observation |
+|--------------|------------|
+| Two CPU-bound containers | CPU time is shared between both |
+| Different priorities (nice) | Higher priority gets more CPU time |
+
+This shows that the Linux scheduler balances fairness and priority when distributing CPU time.
